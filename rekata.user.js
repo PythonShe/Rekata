@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rekata
 // @namespace    rekata.zheng-she.com
-// @version      1.0.2
+// @version      1.0.3
 // @description  Restore loan words from Katakana back to their original form
 // @author       PythonShe
 // @match        *://*/*
@@ -27,6 +27,38 @@
     var RUBY_CLASS = 'rekata-ruby';
     var RT_CLASS = 'rekata-rt';
     var SESSION_DATASET_KEY = 'ktSession';
+
+    var SITE_SPECIFIC_STYLES = [
+        /* YouTube — search results */
+        '#video-title.ytd-video-renderer:has(ruby.' + RUBY_CLASS + ') {',
+        '  line-height: 2.2rem;',
+        '  max-height: 4.4rem;',
+        '  -webkit-line-clamp: 2;',
+        '  display: -webkit-box;',
+        '  -webkit-box-orient: vertical;',
+        '  overflow: hidden;',
+        '  text-overflow: ellipsis;',
+        '}',
+        /* YouTube — homepage grid */
+        '#video-title.ytd-rich-grid-media:has(ruby.' + RUBY_CLASS + ') {',
+        '  line-height: 2.2rem;',
+        '  max-height: 4.4rem;',
+        '  -webkit-line-clamp: 2;',
+        '  display: -webkit-box;',
+        '  -webkit-box-orient: vertical;',
+        '  overflow: hidden;',
+        '  text-overflow: ellipsis;',
+        '}',
+        /* Bilibili — override card title line-height variable */
+        '.bili-video-card:has(ruby.' + RUBY_CLASS + ') {',
+        '  --title-line-height: 2.2rem;',
+        '}',
+        /* Bilibili — card title clamp */
+        '.bili-video-card .bili-video-card__info--tit:has(ruby.' + RUBY_CLASS + ') {',
+        '  -webkit-line-clamp: 2;',
+        '  height: initial !important;',
+        '}'
+    ].join('\n');
 
     var KATAKANA_PATTERN = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF65-\uFF9F]*[\uFF66-\uFF9F]/;
     var EXCLUDE_TAGS = {
@@ -1488,7 +1520,8 @@
     function installBaseStyles() {
         gmAddStyle([
             'ruby.' + RUBY_CLASS + ' { ruby-position: over; }',
-            'rt.' + RT_CLASS + '::before { content: attr(data-rt); }'
+            'rt.' + RT_CLASS + '::before { content: attr(data-rt); }',
+            SITE_SPECIFIC_STYLES
         ].join('\n'));
     }
 
