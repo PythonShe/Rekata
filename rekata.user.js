@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rekata
 // @namespace    rekata.zheng-she.com
-// @version      1.0.0
+// @version      1.0.2
 // @description  Restore loan words from Katakana back to their original form
 // @author       PythonShe
 // @match        *://*/*
@@ -16,9 +16,6 @@
 // @run-at       document-idle
 // @homepageURL  https://github.com/PythonShe/Rekata
 // @supportURL   https://github.com/PythonShe/Rekata/issues
-// @icon         TODO_REKATA_ICON_URL
-// @downloadURL  TODO_REKATA_DOWNLOAD_URL
-// @updateURL    TODO_REKATA_UPDATE_URL
 // ==/UserScript==
 
 (function() {
@@ -48,12 +45,9 @@
     var DEFAULT_SETTINGS = {
         enabled: true,
         backend: 'google',
-        customEndpoint: 'TODO_REKATA_CUSTOM_BACKEND_ENDPOINT',
-        deeplApiKey: 'TODO_REKATA_DEEPL_API_KEY',
-        blacklistPatterns: [
-            '*://*.bilibili.com/video/*',
-            'TODO_REKATA_DEFAULT_BLACKLIST'
-        ],
+        customEndpoint: '',
+        deeplApiKey: '',
+        blacklistPatterns: [],
         requestDebounceMs: 300,
         chunkSize: 120,
         cacheTtlMs: 7 * 24 * 60 * 60 * 1000,
@@ -79,7 +73,9 @@
             map: new WeakMap()
         },
         youtubeSignalsBound: false,
-        youtubeHandlers: []
+        youtubeHandlers: [],
+        lastForcedResetAt: 0,
+        lastForcedResetUrl: ''
     };
 
     var log = {
@@ -132,7 +128,7 @@
         var base = clone(DEFAULT_SETTINGS);
         var input = raw && typeof raw === 'object' ? raw : {};
 
-        base.enabled = Boolean(input.enabled);
+        base.enabled = typeof input.enabled === 'boolean' ? input.enabled : DEFAULT_SETTINGS.enabled;
         base.backend = ['google', 'deepl', 'custom'].indexOf(input.backend) >= 0 ? input.backend : DEFAULT_SETTINGS.backend;
         base.customEndpoint = typeof input.customEndpoint === 'string' ? input.customEndpoint.trim() : DEFAULT_SETTINGS.customEndpoint;
         base.deeplApiKey = typeof input.deeplApiKey === 'string' ? input.deeplApiKey.trim() : DEFAULT_SETTINGS.deeplApiKey;
@@ -149,7 +145,7 @@
         base.requestDebounceMs = toInteger(input.requestDebounceMs, DEFAULT_SETTINGS.requestDebounceMs, 50, 3000);
         base.chunkSize = toInteger(input.chunkSize, DEFAULT_SETTINGS.chunkSize, 1, 500);
         base.cacheTtlMs = toInteger(input.cacheTtlMs, DEFAULT_SETTINGS.cacheTtlMs, 60 * 1000, 30 * 24 * 60 * 60 * 1000);
-        base.debug = Boolean(input.debug);
+        base.debug = typeof input.debug === 'boolean' ? input.debug : DEFAULT_SETTINGS.debug;
         return base;
     }
 
@@ -260,10 +256,6 @@
         return false;
     }
 
-    function isPlaceholderValue(value) {
-        return typeof value === 'string' && /^TODO_REKATA_/i.test(value.trim());
-    }
-
     function splitPhrasesIntoChunks(phrases, chunkSize) {
         var chunks = [];
         for (var i = 0; i < phrases.length; i += chunkSize) {
@@ -362,8 +354,8 @@
 
     function translateWithDeepL(phrases, context) {
         var key = state.settings.deeplApiKey || '';
-        if (!key || isPlaceholderValue(key)) {
-            return Promise.reject(new Error('DeepL API key is not configured. Fill TODO_REKATA_DEEPL_API_KEY.'));
+        if (!key) {
+            return Promise.reject(new Error('DeepL API key is not configured. Please set it in Rekata settings.'));
         }
 
         var form = 'auth_key=' + encodeURIComponent(key)
@@ -400,8 +392,8 @@
 
     function translateWithCustomBackend(phrases, context) {
         var endpoint = (state.settings.customEndpoint || '').trim();
-        if (!endpoint || isPlaceholderValue(endpoint)) {
-            return Promise.reject(new Error('Custom endpoint is not configured. Fill TODO_REKATA_CUSTOM_BACKEND_ENDPOINT.'));
+        if (!endpoint) {
+            return Promise.reject(new Error('Custom endpoint is not configured. Please set it in Rekata settings.'));
         }
 
         return gmRequest({
@@ -560,6 +552,42 @@
         return jaccardSimilarity(previousTokens, currentTokens) < 0.18;
     }
 
+    function extractBaseTextFromRuby(rubyNode) {
+        var text = '';
+        var childNodes = rubyNode.childNodes;
+        for (var i = 0; i < childNodes.length; i++) {
+            var child = childNodes[i];
+            if (child.nodeType === Node.TEXT_NODE) {
+                text += child.nodeValue || '';
+                continue;
+            }
+            if (child.nodeType !== Node.ELEMENT_NODE) {
+                continue;
+            }
+            var tagName = child.tagName ? child.tagName.toLowerCase() : '';
+            if (tagName === 'rt' || tagName === 'rp') {
+                continue;
+            }
+            text += child.textContent || '';
+        }
+        return text;
+    }
+
+    function cleanupInjectedRuby(rootNode) {
+        if (!rootNode || !rootNode.querySelectorAll) {
+            return;
+        }
+
+        var injectedRubyNodes = rootNode.querySelectorAll('ruby.' + RUBY_CLASS);
+        injectedRubyNodes.forEach(function(rubyNode) {
+            if (!rubyNode || !rubyNode.parentNode) {
+                return;
+            }
+            var baseText = extractBaseTextFromRuby(rubyNode);
+            rubyNode.parentNode.replaceChild(document.createTextNode(baseText), rubyNode);
+        });
+    }
+
     function clearSessionQueue() {
         state.queue.clear();
         state.pendingNodes.clear();
@@ -567,10 +595,16 @@
         state.failedPhraseUntil.clear();
     }
 
-    function resetSession(reason) {
+    function resetSession(reason, options) {
+        var resetOptions = options || {};
         state.sessionId += 1;
         clearSessionQueue();
-        state.pendingNodes.add(document.body);
+        if (resetOptions.cleanupDom !== false && document.body) {
+            cleanupInjectedRuby(document.body);
+        }
+        if (document.body) {
+            state.pendingNodes.add(document.body);
+        }
         state.contextSnapshot = computeContextSnapshot();
         log.info('Session reset #' + state.sessionId + ' (' + reason + ')');
     }
@@ -750,10 +784,27 @@
             return;
         }
 
-        var childNodes = node.childNodes;
-        for (var i = 0; i < childNodes.length; i++) {
-            scanNode(childNodes[i]);
+        var textNodes = [];
+        var walker = document.createTreeWalker(
+            node,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: function(textNode) {
+                    if (!textNode || !textNode.parentElement) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    if (shouldSkipElement(textNode.parentElement)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            }
+        );
+
+        while (walker.nextNode()) {
+            textNodes.push(walker.currentNode);
         }
+        textNodes.forEach(injectRubyIntoTextNode);
     }
 
     function scheduleProcessing(delay) {
@@ -902,6 +953,16 @@
         if (!state.isRunning) {
             return;
         }
+        if (source.indexOf('youtube:') === 0) {
+            var now = Date.now();
+            if (state.lastForcedResetUrl !== location.href || now - state.lastForcedResetAt > 1000) {
+                state.lastForcedResetUrl = location.href;
+                state.lastForcedResetAt = now;
+                resetSession('forced-navigation:' + source);
+                scheduleProcessing(180);
+                return;
+            }
+        }
         detectAndHandleContextShift(source);
         scheduleProcessing(0);
     }
@@ -993,6 +1054,9 @@
 
         unbindYouTubeSignals();
         clearSessionQueue();
+        if (document.body) {
+            cleanupInjectedRuby(document.body);
+        }
         updatePanelSummary();
         log.info('Engine stopped (' + reason + ')');
     }
@@ -1025,12 +1089,24 @@
             state.settings = clone(DEFAULT_SETTINGS);
             return;
         }
-        state.settings = sanitizeSettings(parsed);
+        var sanitized = sanitizeSettings(parsed);
+        state.settings = sanitized;
+        var normalizedValue = JSON.stringify(sanitized);
+        if (normalizedValue !== rawValue) {
+            gmSetValue(STORAGE_KEY_SETTINGS, normalizedValue).catch(function(error) {
+                log.warn('Failed to migrate settings format', error);
+            });
+        }
     }
 
     function buildPanel() {
         if (state.panel) {
             return state.panel;
+        }
+
+        var existingHost = document.getElementById(PANEL_HOST_ID);
+        if (existingHost && existingHost.parentNode) {
+            existingHost.parentNode.removeChild(existingHost);
         }
 
         var host = document.createElement('div');
@@ -1181,11 +1257,11 @@
             '      <div class="row-inline">',
             '        <div class="row">',
             '          <label for="rk-custom-endpoint">Custom Endpoint</label>',
-            '          <input id="rk-custom-endpoint" data-role="custom-endpoint" type="text" placeholder="TODO_REKATA_CUSTOM_BACKEND_ENDPOINT" />',
+            '          <input id="rk-custom-endpoint" data-role="custom-endpoint" type="text" placeholder="https://api.example.com/translate" />',
             '        </div>',
             '        <div class="row">',
             '          <label for="rk-deepl-key">DeepL API Key</label>',
-            '          <input id="rk-deepl-key" data-role="deepl-key" type="password" placeholder="TODO_REKATA_DEEPL_API_KEY" />',
+            '          <input id="rk-deepl-key" data-role="deepl-key" type="password" placeholder="Enter DeepL API key" />',
             '        </div>',
             '      </div>',
             '      <div class="row-inline">',
@@ -1210,10 +1286,6 @@
             '        <label for="rk-blacklist">Blacklist Patterns (one per line)</label>',
             '        <textarea id="rk-blacklist" data-role="blacklist"></textarea>',
             '        <div class="hint">Wildcard supported. Example: *://*.example.com/*</div>',
-            '      </div>',
-            '      <div class="row">',
-            '        <label>Project Metadata Placeholders</label>',
-            '        <div class="hint">TODO_REKATA_AUTHOR, TODO_REKATA_NAMESPACE, TODO_REKATA_DESCRIPTION, TODO_REKATA_HOMEPAGE_URL, TODO_REKATA_SUPPORT_URL, TODO_REKATA_ICON_URL, TODO_REKATA_DOWNLOAD_URL, TODO_REKATA_UPDATE_URL</div>',
             '      </div>',
             '    </div>',
             '    <footer class="footer">',
@@ -1304,6 +1376,22 @@
         return panel;
     }
 
+    function safeBuildPanel() {
+        if (state.panel) {
+            return state.panel;
+        }
+        try {
+            return buildPanel();
+        } catch (error) {
+            log.warn('Panel UI is unavailable on this page. Engine continues to run.', error);
+            var staleHost = document.getElementById(PANEL_HOST_ID);
+            if (staleHost && staleHost.parentNode) {
+                staleHost.parentNode.removeChild(staleHost);
+            }
+            return null;
+        }
+    }
+
     function syncPanelInputs() {
         if (!state.panel) {
             return;
@@ -1341,10 +1429,13 @@
     }
 
     function openPanel() {
-        buildPanel();
+        var panel = safeBuildPanel();
+        if (!panel) {
+            return;
+        }
         syncPanelInputs();
         updatePanelSummary();
-        state.panel.overlay.classList.add('open');
+        panel.overlay.classList.add('open');
     }
 
     function closePanel() {
@@ -1403,10 +1494,12 @@
 
     async function init() {
         installBaseStyles();
+        log.info('boot:start');
         await loadSettings();
-        buildPanel();
         registerMenuCommands();
         evaluateEngineState();
+        safeBuildPanel();
+        log.info('boot:done');
     }
 
     init().catch(function(error) {
