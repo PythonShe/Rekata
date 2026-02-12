@@ -2,7 +2,7 @@
 // @name         Rekata
 // @namespace    rekata.zheng-she.com
 // @version      1.0.0
-// @description  Restore loan words from Katakana to its original form
+// @description  Restore loan words from Katakana back to their original form
 // @author       PythonShe
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
