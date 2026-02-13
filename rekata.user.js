@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rekata
 // @namespace    rekata.zheng-she.com
-// @version      1.0.3
+// @version      1.0.4
 // @description  Restore loan words from Katakana back to their original form
 // @author       PythonShe
 // @match        *://*/*
@@ -610,13 +610,18 @@
             return;
         }
 
+        var parents = new Set();
         var injectedRubyNodes = rootNode.querySelectorAll('ruby.' + RUBY_CLASS);
         injectedRubyNodes.forEach(function(rubyNode) {
             if (!rubyNode || !rubyNode.parentNode) {
                 return;
             }
+            parents.add(rubyNode.parentNode);
             var baseText = extractBaseTextFromRuby(rubyNode);
             rubyNode.parentNode.replaceChild(document.createTextNode(baseText), rubyNode);
+        });
+        parents.forEach(function(parent) {
+            if (parent.normalize) { parent.normalize(); }
         });
     }
 
@@ -769,6 +774,11 @@
             }
             var phrase = match[0];
             var afterStart = cursor.splitText(match.index);
+            // Remove empty text node artifact from splitText(0) — prevents
+            // YouTube's title-reading from seeing "" as firstChild.nodeValue
+            if (match.index === 0 && cursor.parentNode) {
+                cursor.parentNode.removeChild(cursor);
+            }
             var afterPhrase = afterStart.splitText(phrase.length);
             var created = createRubyNode(phrase);
             afterStart.parentNode.insertBefore(created.ruby, afterStart);
